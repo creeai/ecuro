@@ -1,11 +1,11 @@
 {
   "name": "ecuro-mcp-server",
   "version": "2.0.0",
-  "description": "MCP Server para integração com a API Ecuro Light - Sistema de Agendamento Odontológico (22 tools)",
+  "description": "MCP Server para integração com a API Ecuro Light - Sistema de Agendamento Odontológico (27 tools)",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "npx tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts"
   },
@@ -13,12 +13,12 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "axios": "^1.7.9",
     "express": "^4.21.2",
+    "typescript": "^5.8.3",
     "zod": "^3.24.4"
   },
   "devDependencies": {
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.18",
-    "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "tsx": "^4.19.4"
   }
 }
