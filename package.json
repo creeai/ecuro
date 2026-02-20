@@ -1,18 +1,21 @@
 {
   "name": "ecuro-mcp-server",
-  "version": "2.0.0",
-  "description": "MCP Server para integração com a API Ecuro Light (22 tools)",
+  "version": "2.1.0",
+  "description": "MCP Server para integração com a API Ecuro Light (22 tools) - Compatível com Claude.ai Web",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "npx -p typescript tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "dev": "npx -p typescript tsc && node dist/index.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.18",
+    "@types/cors": "^2.8.17",
     "axios": "^1.7.9",
+    "cors": "^2.8.5",
     "express": "^4.21.2",
     "typescript": "^5.8.3",
     "zod": "^3.24.4"
