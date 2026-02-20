@@ -1,10 +1,21 @@
 // ============================================================
-// Ecuro Light MCP Server v2.1 - CLAUDE.AI WEB
+// Ecuro Light MCP Server v2 - Main Entry Point
+// ============================================================
+//
+// Servidor MCP para integração com a API Ecuro Light
+// Sistema de Agendamento Odontológico - 27 tools
+//
+// Transports suportados:
+//   - stdio  (padrão) → para uso local com Claude Desktop, Cursor, etc.
+//   - http   → para uso remoto via Streamable HTTP
+//
 // ============================================================
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { Request, Response } from "express";
+import { randomUUID } from "crypto";
 
 import { registerAppointmentTools } from "./tools/appointments.js";
 import { registerAvailabilityTools } from "./tools/availability.js";
@@ -14,227 +25,152 @@ import { registerCommunicationTools } from "./tools/communications.js";
 
 import { TOOL_COUNT } from "./constants.js";
 
+// ── Helper: cria e configura um McpServer com todas as tools ──
 function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "ecuro-mcp-server",
-    version: "2.1.0",
+    version: "2.0.0",
   });
-  registerAppointmentTools(server);
-  registerAvailabilityTools(server);
-  registerPatientTools(server);
-  registerClinicTools(server);
-  registerCommunicationTools(server);
+  registerAppointmentTools(server);    // 8 tools
+  registerAvailabilityTools(server);   // 4 tools
+  registerPatientTools(server);        // 7 tools
+  registerClinicTools(server);         // 7 tools
+  registerCommunicationTools(server);  // 1 tool
   return server;
 }
 
+// ── Transport: stdio ─────────────────────────────────────────
 async function runStdio(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`✅ Ecuro MCP Server v2.1 - ${TOOL_COUNT} tools`);
+  console.error(`✅ Ecuro MCP Server v2 - ${TOOL_COUNT} tools registradas`);
   console.error("🚀 Rodando via stdio");
 }
 
+// ── Transport: Streamable HTTP (com sessões) ─────────────────
 async function runHTTP(): Promise<void> {
   const app = express();
   app.use(express.json());
-  
-  // CORS para Claude.ai
-  app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Accept');
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-    }
-    next();
-  });
 
-  // Servidor MCP global (stateless)
-  const mcpServer = createMcpServer();
-  
-  // Captura as tools registradas
-  const toolsList: any[] = [];
-  let toolsListCaptured = false;
+  // Armazena sessões ativas: sessionId → transport
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
 
-  // Health check
-  app.get("/", (_req: Request, res: Response) => {
-    res.json({
-      status: "ok",
-      server: "ecuro-mcp-server",
-      version: "2.1.0",
-      tools: TOOL_COUNT,
-      mode: "claude.ai-web",
-    });
-  });
-  
-  app.get("/health", (_req: Request, res: Response) => {
-    res.json({
-      status: "ok",
-      server: "ecuro-mcp-server",
-      version: "2.1.0",
-      tools: TOOL_COUNT,
-      mode: "claude.ai-web",
-    });
-  });
+  // Health check — responde em / e /health
+  const healthResponse = {
+    status: "ok",
+    server: "ecuro-mcp-server",
+    version: "2.0.0",
+    tools: TOOL_COUNT,
+  };
+  app.get("/", (_req: Request, res: Response) => { res.json(healthResponse); });
+  app.get("/health", (_req: Request, res: Response) => { res.json(healthResponse); });
 
-  // ══════════════════════════════════════════════════════════
-  // ENDPOINT /mcp - STATELESS (CLAUDE.AI WEB)
-  // ══════════════════════════════════════════════════════════
-
+  // ── POST /mcp — Recebe mensagens JSON-RPC do MCP ───────────
   app.post("/mcp", async (req: Request, res: Response) => {
     try {
-      const { jsonrpc, id, method, params } = req.body;
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
-      if (jsonrpc !== "2.0") {
-        return res.status(400).json({
+      // Sessão existente → reutiliza
+      if (sessionId && sessions.has(sessionId)) {
+        const transport = sessions.get(sessionId)!;
+        await transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // SessionId inválido → rejeita
+      if (sessionId && !sessions.has(sessionId)) {
+        res.status(400).json({
           jsonrpc: "2.0",
-          error: { code: -32600, message: "Invalid Request" },
-          id: id || null,
+          error: { code: -32000, message: "Session not found. Send initialize first." },
+          id: null,
+        });
+        return;
+      }
+
+      // Nova sessão
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: true,
+      });
+
+      const server = createMcpServer();
+      await server.connect(transport);
+
+      const newSessionId = transport.sessionId;
+      if (newSessionId) {
+        sessions.set(newSessionId, transport);
+        console.error(`📌 Nova sessão MCP: ${newSessionId}`);
+      }
+
+      transport.onclose = () => {
+        if (newSessionId) {
+          sessions.delete(newSessionId);
+          console.error(`🗑️  Sessão encerrada: ${newSessionId}`);
+        }
+      };
+
+      await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      console.error("❌ Erro no POST /mcp:", error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "Internal server error" },
+          id: null,
         });
       }
-
-      let result: any;
-
-      // Initialize
-      if (method === "initialize") {
-        result = {
-          protocolVersion: "2024-11-05",
-          capabilities: {
-            tools: {},
-          },
-          serverInfo: {
-            name: "ecuro-mcp-server",
-            version: "2.1.0",
-          },
-        };
-        
-        return res.json({ jsonrpc: "2.0", result, id });
-      }
-
-      // Tools list
-      if (method === "tools/list") {
-        // Captura as tools na primeira chamada
-        if (!toolsListCaptured) {
-          const handlers = (mcpServer as any)._requestHandlers;
-          
-          for (const [key, handler] of handlers.entries()) {
-            if (key.method === "tools/call" && handler.schema) {
-              const toolName = handler.schema.params?.properties?.name?.const;
-              const toolSchema = (mcpServer as any)._toolSchemas?.get(toolName);
-              
-              if (toolSchema) {
-                toolsList.push({
-                  name: toolName,
-                  description: toolSchema.description || "",
-                  inputSchema: toolSchema.inputSchema || { type: "object" },
-                });
-              }
-            }
-          }
-          
-          // Se não capturou dessa forma, tenta pelo mapa de tools
-          if (toolsList.length === 0) {
-            const toolsMap = (mcpServer as any)._tools || new Map();
-            for (const [name, tool] of toolsMap.entries()) {
-              toolsList.push({
-                name,
-                description: tool.description || tool.title || "",
-                inputSchema: tool.inputSchema || { type: "object" },
-              });
-            }
-          }
-          
-          toolsListCaptured = true;
-          console.error(`📋 ${toolsList.length} tools capturadas`);
-        }
-
-        result = { tools: toolsList };
-        return res.json({ jsonrpc: "2.0", result, id });
-      }
-
-      // Tools call
-      if (method === "tools/call") {
-        const { name, arguments: args } = params || {};
-        
-        if (!name) {
-          return res.status(400).json({
-            jsonrpc: "2.0",
-            error: { code: -32602, message: "Missing tool name" },
-            id,
-          });
-        }
-
-        // Chama a tool via servidor interno
-        try {
-          // Tenta chamar pelo request handler
-          const callResult = await (mcpServer as any).request({
-            method: "tools/call",
-            params: { name, arguments: args || {} },
-          });
-          
-          result = callResult;
-          return res.json({ jsonrpc: "2.0", result, id });
-        } catch (error: any) {
-          console.error(`❌ Erro ao chamar tool ${name}:`, error.message);
-          return res.json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32000,
-              message: error.message || "Tool execution failed",
-            },
-            id,
-          });
-        }
-      }
-
-      // Ping
-      if (method === "ping") {
-        result = {};
-        return res.json({ jsonrpc: "2.0", result, id });
-      }
-
-      // Método não encontrado
-      return res.json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32601,
-          message: `Method not found: ${method}`,
-        },
-        id,
-      });
-
-    } catch (error: any) {
-      console.error("❌ Erro no POST /mcp:", error);
-      return res.status(500).json({
-        jsonrpc: "2.0",
-        error: {
-          code: -32603,
-          message: `Internal error: ${error.message}`,
-        },
-        id: req.body?.id || null,
-      });
     }
+  });
+
+  // ── GET /mcp — SSE stream ──────────────────────────────────
+  app.get("/mcp", async (req: Request, res: Response) => {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    if (!sessionId || !sessions.has(sessionId)) {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Invalid or missing session ID" },
+        id: null,
+      });
+      return;
+    }
+    const transport = sessions.get(sessionId)!;
+    await transport.handleRequest(req, res);
+  });
+
+  // ── DELETE /mcp — Encerra sessão ───────────────────────────
+  app.delete("/mcp", async (req: Request, res: Response) => {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    if (!sessionId || !sessions.has(sessionId)) {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Invalid or missing session ID" },
+        id: null,
+      });
+      return;
+    }
+    const transport = sessions.get(sessionId)!;
+    await transport.handleRequest(req, res);
   });
 
   const port = parseInt(process.env.PORT || "3000", 10);
   app.listen(port, "0.0.0.0", () => {
-    console.error(`✅ Ecuro MCP Server v2.1 - ${TOOL_COUNT} tools`);
-    console.error(`🚀 http://0.0.0.0:${port}/mcp`);
-    console.error(`🌐 Modo: Claude.ai Web (stateless)`);
+    console.error(`✅ Ecuro MCP Server v2 - ${TOOL_COUNT} tools registradas`);
+    console.error(`🚀 Rodando em http://0.0.0.0:${port}/mcp`);
   });
 }
 
+// ── Selecionar transport e iniciar ───────────────────────────
 const transportMode = process.env.TRANSPORT || "stdio";
 
 if (transportMode === "http") {
   runHTTP().catch((error) => {
-    console.error("❌ Erro:", error);
+    console.error("❌ Erro no servidor HTTP:", error);
     process.exit(1);
   });
 } else {
   runStdio().catch((error) => {
-    console.error("❌ Erro:", error);
+    console.error("❌ Erro no servidor stdio:", error);
     process.exit(1);
   });
 }
