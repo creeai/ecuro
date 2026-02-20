@@ -1,192 +1,251 @@
 // ============================================================
-// Ecuro Light MCP Server v2 - Zod Schemas (22 tools)
+// Ecuro Light MCP Server v2.1 - COMPATÍVEL COM CLAUDE.AI WEB
+// ============================================================
+//
+// Servidor MCP para integração com a API Ecuro Light
+// Sistema de Agendamento Odontológico - 22 tools
+//
+// ✅ CORRIGIDO: Funciona com Claude.ai Web (sem sessões)
+// ✅ CORRIGIDO: HTTP POST stateless
+//
+// Transports suportados:
+//   - stdio  (padrão) → para uso local com Claude Desktop, Cursor, etc.
+//   - http   → para uso remoto via Claude.ai Web
+//
 // ============================================================
 
-import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import express, { Request, Response } from "express";
+import cors from "cors";
 
-// ── Helpers ──────────────────────────────────────────────────
-const uuid = z.string().uuid();
-const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato: YYYY-MM-DD");
-const timeStr = z.string().regex(/^\d{2}:\d{2}:\d{2}$/, "Formato: HH:MM:SS");
+import { registerAppointmentTools } from "./tools/appointments.js";
+import { registerAvailabilityTools } from "./tools/availability.js";
+import { registerPatientTools } from "./tools/patients.js";
+import { registerClinicTools } from "./tools/clinics.js";
 
-// ══════════════════════════════════════════════════════════════
-// AGENDAMENTO
-// ══════════════════════════════════════════════════════════════
+import { TOOL_COUNT } from "./constants.js";
 
-export const CreateAppointmentSchema = z.object({
-  fullName: z.string().min(2).describe("Nome completo do paciente"),
-  phoneNumber: z.string().min(8).describe("Telefone (ex: 31999999999)"),
-  clinicId: uuid.describe("ID da clínica (UUID)"),
-  date: dateStr.describe("Data da consulta (YYYY-MM-DD)"),
-  time: timeStr.optional().describe("Horário (HH:MM:SS). Padrão: 19:59:00"),
-  dateOfBirth: dateStr.optional().describe("Data de nascimento (YYYY-MM-DD)"),
-  email: z.string().email().optional().describe("Email do paciente"),
-  doctorId: z.string().optional().describe("ID do dentista (UUID ou '0' para não especificado)"),
-  specialityId: uuid.optional().describe("ID da especialidade (padrão: avaliação)"),
-  socialNumber: z.string().optional().describe("CPF do paciente"),
-  patientId: uuid.optional().describe("ID do paciente existente (pula busca)"),
-  notes: z.string().max(500).optional().describe("Observações sobre a consulta"),
-  durationMinutes: z.number().int().min(5).max(240).optional().describe("Duração em minutos"),
-  campaignToken: z.string().optional().describe("Token de campanha de marketing"),
-  channelName: z.string().optional().describe("Canal de marketing (ex: Radio, Website, Facebook)"),
-  maxConcurrentAppointments: z.number().int().min(1).max(10).optional().describe("Máx consultas simultâneas (só sem dentista real)"),
-});
+// ── Helper: cria e configura um McpServer com todas as tools ──
+function createMcpServer(): McpServer {
+  const server = new McpServer({
+    name: "ecuro-mcp-server",
+    version: "2.1.0",
+  });
+  registerAppointmentTools(server);   // 7 tools
+  registerAvailabilityTools(server);  // 4 tools
+  registerPatientTools(server);       // 6 tools
+  registerClinicTools(server);        // 5 tools
+  return server;
+}
 
-export const UpdateAppointmentSchema = z.object({
-  appointmentId: uuid.describe("ID da consulta a atualizar"),
-  date: dateStr.optional().describe("Nova data (YYYY-MM-DD)"),
-  time: timeStr.optional().describe("Novo horário (HH:MM:SS)"),
-  status: z.union([
-    z.number().int().min(1).max(5),
-    z.enum(["PENDING", "NOT_ANSWERED", "RESCHEDULED", "CONFIRMED", "CANCELED"]),
-  ]).optional().describe("Novo status (1-5 ou nome)"),
-  doctorId: z.string().optional().describe("ID do novo dentista"),
-  doctorName: z.string().optional().describe("Nome do novo dentista"),
-  durationMinutes: z.number().optional().describe("Nova duração em minutos"),
-  notes: z.string().max(500).optional().describe("Observações (salvas como comentário)"),
-  cancellationReason: z.string().max(500).optional().describe("Motivo do cancelamento"),
-  createReturnRecord: z.boolean().optional().describe("Se true + status CANCELED = cria registro de retorno"),
-});
+// ── Transport: stdio ─────────────────────────────────────────
+async function runStdio(): Promise<void> {
+  const server = createMcpServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error(`✅ Ecuro MCP Server v2.1 - ${TOOL_COUNT} tools registradas`);
+  console.error("🚀 Rodando via stdio");
+}
 
-export const ConfirmAppointmentSchema = z.object({
-  appointmentId: uuid.describe("ID da consulta a confirmar"),
-});
+// ── Transport: HTTP STATELESS (compatível com Claude.ai) ────
+async function runHTTP(): Promise<void> {
+  const app = express();
+  
+  // CORS para permitir Claude.ai
+  app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Accept'],
+  }));
+  
+  app.use(express.json());
 
-export const ListPatientAppointmentsSchema = z.object({
-  patientId: uuid.describe("ID do paciente"),
-});
+  // Health check
+  const healthResponse = {
+    status: "ok",
+    server: "ecuro-mcp-server",
+    version: "2.1.0",
+    tools: TOOL_COUNT,
+    compatibility: "claude.ai-web",
+  };
+  
+  app.get("/", (_req: Request, res: Response) => { 
+    res.json(healthResponse); 
+  });
+  
+  app.get("/health", (_req: Request, res: Response) => { 
+    res.json(healthResponse); 
+  });
 
-export const ListDoctorAppointmentsSchema = z.object({
-  dentistId: z.string().describe("ID do dentista"),
-  startTime: z.string().describe("Data/hora início (ISO 8601, ex: 2025-02-20T00:00:00.000Z)"),
-  endTime: z.string().describe("Data/hora fim (ISO 8601, ex: 2025-02-20T23:59:59.000Z)"),
-});
+  // Servidor MCP global persistente (para HTTP stateless)
+  const globalServer = createMcpServer();
+  
+  // Mapa de tools registradas
+  const registeredTools = new Map<string, any>();
+  
+  // Captura as tools ao serem registradas
+  const originalRegisterTool = globalServer.registerTool.bind(globalServer);
+  globalServer.registerTool = function(name: string, config: any, handler: any) {
+    registeredTools.set(name, { config, handler });
+    return originalRegisterTool(name, config, handler);
+  };
+  
+  // Re-registra todas as tools para capturar
+  registerAppointmentTools(globalServer);
+  registerAvailabilityTools(globalServer);
+  registerPatientTools(globalServer);
+  registerClinicTools(globalServer);
 
-export const ListAppointmentsSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  dateRange: z.string().optional().describe("Intervalo: YYYY-MM-DD,YYYY-MM-DD (obrigatório sem appointmentId)"),
-  appointmentId: uuid.optional().describe("ID de consulta específica"),
-  status: z.number().int().min(1).max(5).optional().describe("Filtrar por status (1-5)"),
-  dentistId: z.string().optional().describe("Filtrar por dentista"),
-  all: z.boolean().optional().describe("Incluir consultas de todos os consumers"),
-});
+  // ── POST /mcp — Endpoint MCP Stateless ─────────────────────
+  app.post("/mcp", async (req: Request, res: Response) => {
+    try {
+      const { jsonrpc, id, method, params } = req.body;
 
-export const ListReturnsSchema = z.object({
-  clinicId: uuid.optional().describe("ID da clínica"),
-  patientId: uuid.optional().describe("ID do paciente"),
-  initialAppointmentId: uuid.optional().describe("ID da consulta original"),
-  specialtyId: uuid.optional().describe("ID da especialidade"),
-  dentistId: uuid.optional().describe("ID do dentista"),
-  startDate: z.string().optional().describe("Data inicial (YYYY-MM-DD)"),
-  endDate: z.string().optional().describe("Data final (YYYY-MM-DD)"),
-  includeRescheduled: z.boolean().optional().describe("Incluir já reagendados (padrão: false)"),
-});
+      // Validação básica do JSON-RPC 2.0
+      if (jsonrpc !== "2.0") {
+        return res.status(400).json({
+          jsonrpc: "2.0",
+          error: { code: -32600, message: "Invalid Request: jsonrpc must be '2.0'" },
+          id: id || null,
+        });
+      }
 
-// ══════════════════════════════════════════════════════════════
-// DISPONIBILIDADE
-// ══════════════════════════════════════════════════════════════
+      // Roteamento de métodos MCP
+      let result: unknown;
 
-export const SpecialtyAvailabilitySchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  specialtyId: uuid.optional().describe("ID da especialidade (padrão: avaliação)"),
-  doctorId: z.string().optional().describe("ID do dentista (padrão: '0')"),
-  startDate: z.string().optional().describe("Data início (YYYY-MM-DD ou ISO 8601)"),
-  endDate: z.string().optional().describe("Data fim (YYYY-MM-DD ou ISO 8601)"),
-  duration: z.number().int().min(5).max(240).optional().describe("Duração em minutos"),
-  concurrent: z.number().int().min(1).max(10).optional().describe("Máx consultas simultâneas"),
-  durationAware: z.boolean().optional().describe("Usar duração da especialidade (padrão: true)"),
-});
+      switch (method) {
+        case "initialize": {
+          result = {
+            protocolVersion: "2024-11-05",
+            capabilities: {
+              tools: {},
+            },
+            serverInfo: {
+              name: "ecuro-mcp-server",
+              version: "2.1.0",
+            },
+          };
+          break;
+        }
 
-export const DentistAvailabilitySchema = z.object({
-  dentistId: z.string().describe("ID do dentista"),
-  date: dateStr.describe("Data (YYYY-MM-DD)"),
-});
+        case "tools/list": {
+          // Lista todas as ferramentas registradas
+          const tools: Array<{
+            name: string;
+            description?: string;
+            inputSchema: unknown;
+          }> = [];
 
-export const ClinicBlockersSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-});
+          for (const [name, tool] of registeredTools.entries()) {
+            tools.push({
+              name,
+              description: tool.config.description || tool.config.title || "",
+              inputSchema: tool.config.inputSchema || { type: "object", properties: {} },
+            });
+          }
 
-export const FreeDatesSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  dateMin: dateStr.describe("Data mínima (YYYY-MM-DD)"),
-  dateMax: dateStr.describe("Data máxima (YYYY-MM-DD)"),
-});
+          result = { tools };
+          break;
+        }
 
-// ══════════════════════════════════════════════════════════════
-// PACIENTES
-// ══════════════════════════════════════════════════════════════
+        case "tools/call": {
+          const { name, arguments: args } = params || {};
+          
+          if (!name) {
+            return res.status(400).json({
+              jsonrpc: "2.0",
+              error: { code: -32602, message: "Missing tool name" },
+              id,
+            });
+          }
 
-export const GetPatientByPhoneSchema = z.object({
-  phone: z.string().min(8).describe("Telefone do paciente (ex: 31989354137)"),
-});
+          const tool = registeredTools.get(name);
+          if (!tool) {
+            return res.status(200).json({
+              jsonrpc: "2.0",
+              error: { 
+                code: -32601, 
+                message: `Tool not found: ${name}` 
+              },
+              id,
+            });
+          }
 
-export const GetPatientByCpfSchema = z.object({
-  cpf: z.string().describe("CPF do paciente (com ou sem formatação)"),
-  clinicId: uuid.optional().describe("ID da clínica (opcional, para busca multi-clínica)"),
-});
+          // Chama a ferramenta
+          try {
+            const toolResult = await tool.handler(args || {});
+            result = toolResult;
+          } catch (error: any) {
+            return res.status(200).json({
+              jsonrpc: "2.0",
+              error: { 
+                code: -32000, 
+                message: error.message || "Tool execution failed" 
+              },
+              id,
+            });
+          }
+          break;
+        }
 
-export const PatientDetailsSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  patientId: uuid.optional().describe("ID do paciente"),
-  cpf: z.string().optional().describe("CPF do paciente (alternativa ao ID)"),
-});
+        case "ping": {
+          result = {};
+          break;
+        }
 
-export const ListPatientsSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  all: z.boolean().optional().describe("Listar todos os pacientes"),
-  lastAppointment: dateStr.optional().describe("Filtrar por última consulta"),
-  dateOfBirth: dateStr.optional().describe("Filtrar por data de nascimento"),
-});
+        default: {
+          return res.status(200).json({
+            jsonrpc: "2.0",
+            error: { 
+              code: -32601, 
+              message: `Method not found: ${method}` 
+            },
+            id,
+          });
+        }
+      }
 
-export const PatientTreatmentsSchema = z.object({
-  patientId: uuid.describe("ID do paciente"),
-});
+      // Resposta de sucesso
+      res.json({
+        jsonrpc: "2.0",
+        result,
+        id,
+      });
 
-export const OrtoPatientsSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  category: z.enum([
-    "nao-remarcados", "active", "inactive", "atrazados",
-    "fantasma", "indicacao", "cancelled", "finalized",
-  ]).optional().describe("Categoria (padrão: nao-remarcados)"),
-  page: z.number().int().min(1).optional().describe("Página (padrão: 1)"),
-  pageSize: z.number().int().min(1).max(100).optional().describe("Itens por página (padrão: 20)"),
-  patientName: z.string().optional().describe("Buscar por nome, CPF ou ID público"),
-});
+    } catch (error: any) {
+      console.error("❌ Erro no POST /mcp:", error);
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { 
+          code: -32603, 
+          message: `Internal error: ${error.message}` 
+        },
+        id: req.body?.id || null,
+      });
+    }
+  });
 
-// ══════════════════════════════════════════════════════════════
-// CLÍNICAS & DENTISTAS
-// ══════════════════════════════════════════════════════════════
+  // Inicia servidor
+  const port = parseInt(process.env.PORT || "3000", 10);
+  app.listen(port, "0.0.0.0", () => {
+    console.error(`✅ Ecuro MCP Server v2.1 - ${TOOL_COUNT} tools registradas`);
+    console.error(`🚀 Rodando em http://0.0.0.0:${port}/mcp`);
+    console.error(`✅ Compatível com Claude.ai Web (stateless)`);
+  });
+}
 
-export const ListClinicsSchema = z.object({
-  clinicId: uuid.optional().describe("ID de clínica específica (opcional)"),
-});
+// ── Selecionar transport e iniciar ───────────────────────────
+const transportMode = process.env.TRANSPORT || "stdio";
 
-export const ListSpecialtiesSchema = z.object({});
-
-export const ActiveDentistsSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-});
-
-// ══════════════════════════════════════════════════════════════
-// RELATÓRIOS & FINANCEIRO
-// ══════════════════════════════════════════════════════════════
-
-export const ApiReportSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  startDate: dateStr.optional().describe("Data início (YYYY-MM-DD). Padrão: 31 dias atrás"),
-  endDate: dateStr.optional().describe("Data fim (YYYY-MM-DD). Padrão: hoje"),
-  appointmentId: uuid.optional().describe("ID de consulta específica"),
-  patientId: uuid.optional().describe("ID de paciente específico"),
-  nonApiExclusive: z.boolean().optional().describe("Incluir todas as consultas, não só API"),
-});
-
-export const ListBoletosSchema = z.object({
-  clinicId: uuid.describe("ID da clínica"),
-  patientId: uuid.optional().describe("ID do paciente"),
-  dentistId: uuid.optional().describe("ID do dentista"),
-  status: z.array(z.string()).optional().describe("Status: CREATED, REGISTERED, SETTLEMENT, CANCELLED, etc"),
-  dueSoon: z.enum(["today", "week", "month"]).optional().describe("Vencendo em breve"),
-  overdue: z.boolean().optional().describe("Boletos vencidos"),
-  page: z.number().int().min(1).optional().describe("Página"),
-  pageSize: z.number().int().min(1).max(100).optional().describe("Itens por página"),
-});
+if (transportMode === "http") {
+  runHTTP().catch((error) => {
+    console.error("❌ Erro no servidor HTTP:", error);
+    process.exit(1);
+  });
+} else {
+  runStdio().catch((error) => {
+    console.error("❌ Erro no servidor stdio:", error);
+    process.exit(1);
+  });
+}
