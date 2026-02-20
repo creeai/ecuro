@@ -51,6 +51,12 @@ async function runHTTP(): Promise<void> {
   const app = express();
   app.use(express.json());
 
+  // Health check — responde em / e /health para compatibilidade com Easypanel/Docker
+  const healthResponse = { status: "ok", server: "ecuro-mcp-server", version: "1.0.0" };
+  app.get("/", (_req, res) => { res.json(healthResponse); });
+  app.get("/health", (_req, res) => { res.json(healthResponse); });
+
+  // MCP endpoint
   app.post("/mcp", async (req, res) => {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -61,14 +67,9 @@ async function runHTTP(): Promise<void> {
     await transport.handleRequest(req, res, req.body);
   });
 
-  // Health check
-  app.get("/health", (_req, res) => {
-    res.json({ status: "ok", server: "ecuro-mcp-server", version: "1.0.0" });
-  });
-
   const port = parseInt(process.env.PORT || "3000", 10);
-  app.listen(port, () => {
-    console.error(`🚀 Ecuro MCP Server rodando em http://localhost:${port}/mcp`);
+  app.listen(port, "0.0.0.0", () => {
+    console.error(`🚀 Ecuro MCP Server rodando em http://0.0.0.0:${port}/mcp`);
   });
 }
 
