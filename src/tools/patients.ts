@@ -1,5 +1,5 @@
 // ============================================================
-// Ecuro Light MCP Server v2 - Patient Tools (6 tools)
+// Ecuro Light MCP Server v2 - Patient Tools (7 tools)
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,6 +11,7 @@ import {
   ListPatientsSchema,
   PatientTreatmentsSchema,
   OrtoPatientsSchema,
+  OnboardingEventSchema,
 } from "../schemas/index.js";
 
 export function registerPatientTools(server: McpServer): void {
@@ -121,6 +122,27 @@ Paginado e com contadores por categoria.`,
     },
     async (params) => {
       const result = await ecuroApi.post("/orto-patients", params as unknown as Record<string, unknown>);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── 18. Evento de onboarding do paciente ──────────────────────
+  server.registerTool(
+    "ecuro_onboarding_event",
+    {
+      title: "Evento de Onboarding do Paciente",
+      description: `Processa evento de onboarding do paciente no app mobile.
+
+Eventos suportados:
+- first_login_done: Primeiro login concluído
+- push-permission-status: Status de permissão para notificações push
+
+username deve ser o CPF do paciente (com ou sem formatação).
+Para push-permission-status, permissionStatus é obrigatório (granted, denied, not_determined).`,
+      inputSchema: OnboardingEventSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.post("/onboarding-event", params as unknown as Record<string, unknown>);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );

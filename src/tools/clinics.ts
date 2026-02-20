@@ -1,5 +1,5 @@
 // ============================================================
-// Ecuro Light MCP Server v2 - Clinics, Reports & Finance (5 tools)
+// Ecuro Light MCP Server v2 - Clinics, Reports & Finance (7 tools)
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -10,6 +10,8 @@ import {
   ActiveDentistsSchema,
   ApiReportSchema,
   ListBoletosSchema,
+  ExportCsvSchema,
+  GetClinicLogoSchema,
 } from "../schemas/index.js";
 
 export function registerClinicTools(server: McpServer): void {
@@ -95,6 +97,43 @@ Paginado. Retorna: valor, vencimento, status, nome do paciente e links para down
     async (params) => {
       const result = await ecuroApi.post("/list-boletos", params as unknown as Record<string, unknown>);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── 23. Exportar relatório CSV ────────────────────────────────
+  server.registerTool(
+    "ecuro_export_csv",
+    {
+      title: "Exportar Relatório CSV",
+      description: `Exporta relatório de consultas em formato CSV.
+
+IMPORTANTE: Disponível apenas entre 20h-8h BRT (fora do horário comercial).
+
+Inclui: consultas, status, pacientes, valores aprovados, pagamentos, dados da clínica, canal de origem.
+Por padrão retorna apenas consultas da API. nonApiExclusive=true para todas.
+clinicId é obrigatório.`,
+      inputSchema: ExportCsvSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.getText("/csv", params as unknown as Record<string, unknown>);
+      return { content: [{ type: "text", text: result }] };
+    }
+  );
+
+  // ── 24. Buscar logo da clínica ────────────────────────────────
+  server.registerTool(
+    "ecuro_get_clinic_logo",
+    {
+      title: "Buscar Logo da Clínica",
+      description: `Retorna o logo da clínica em formato base64 (data URI).
+
+logoId é o UUID do arquivo de logo, obtido nos dados da clínica via ecuro_list_clinics.
+Suporta PNG e JPEG. Retorna: data:image/png;base64,...`,
+      inputSchema: GetClinicLogoSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.getBinary(`/logo/${params.logoId}`);
+      return { content: [{ type: "text", text: result }] };
     }
   );
 }

@@ -10,4 +10,4 @@ export const ECURO_API_BASE_URL =
 export const ECURO_ACCESS_TOKEN = process.env.ECURO_ACCESS_TOKEN || "";
 
 /** Total de tools registradas */
-export const TOOL_COUNT = 22;
+export const TOOL_COUNT = 27;

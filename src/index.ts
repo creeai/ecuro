@@ -3,7 +3,7 @@
 // ============================================================
 //
 // Servidor MCP para integração com a API Ecuro Light
-// Sistema de Agendamento Odontológico - 22 tools
+// Sistema de Agendamento Odontológico - 27 tools
 //
 // Transports suportados:
 //   - stdio  (padrão) → para uso local com Claude Desktop, Cursor, etc.
@@ -21,6 +21,7 @@ import { registerAppointmentTools } from "./tools/appointments.js";
 import { registerAvailabilityTools } from "./tools/availability.js";
 import { registerPatientTools } from "./tools/patients.js";
 import { registerClinicTools } from "./tools/clinics.js";
+import { registerCommunicationTools } from "./tools/communications.js";
 
 import { TOOL_COUNT } from "./constants.js";
 
@@ -30,10 +31,11 @@ function createMcpServer(): McpServer {
     name: "ecuro-mcp-server",
     version: "2.0.0",
   });
-  registerAppointmentTools(server);   // 7 tools
-  registerAvailabilityTools(server);  // 4 tools
-  registerPatientTools(server);       // 6 tools
-  registerClinicTools(server);        // 5 tools
+  registerAppointmentTools(server);    // 8 tools
+  registerAvailabilityTools(server);   // 4 tools
+  registerPatientTools(server);        // 7 tools
+  registerClinicTools(server);         // 7 tools
+  registerCommunicationTools(server);  // 1 tool
   return server;
 }
 

@@ -47,6 +47,35 @@ class EcuroApiClient {
     }
   }
 
+  /** GET que retorna texto puro (para endpoints CSV/text) */
+  async getText(path: string, params?: Record<string, unknown>): Promise<string> {
+    try {
+      const response = await this.client.get<string>(path, {
+        params,
+        responseType: "text",
+        headers: { accept: "text/csv, text/plain, */*" },
+      });
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /** GET que retorna imagem como base64 data URI */
+  async getBinary(path: string): Promise<string> {
+    try {
+      const response = await this.client.get(path, {
+        responseType: "arraybuffer",
+      });
+      const contentType: string =
+        (response.headers["content-type"] as string) || "image/png";
+      const base64 = Buffer.from(response.data as ArrayBuffer).toString("base64");
+      return `data:${contentType};base64,${base64}`;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
   private handleError(error: unknown): Error {
     if (axios.isAxiosError(error)) {
       const status = error.response?.status;

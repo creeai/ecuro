@@ -1,5 +1,5 @@
 // ============================================================
-// Ecuro Light MCP Server v2 - Appointment Tools (7 tools)
+// Ecuro Light MCP Server v2 - Appointment Tools (8 tools)
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -12,6 +12,7 @@ import {
   ListDoctorAppointmentsSchema,
   ListAppointmentsSchema,
   ListReturnsSchema,
+  CreateAppointmentWebhookSchema,
 } from "../schemas/index.js";
 
 export function registerAppointmentTools(server: McpServer): void {
@@ -148,6 +149,26 @@ Inclui dados do paciente, consulta original e informações de reagendamento.`,
     },
     async (params) => {
       const result = await ecuroApi.post("/list-returns", params as unknown as Record<string, unknown>);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── 8. Webhook de criação de agendamento ────────────────────
+  server.registerTool(
+    "ecuro_create_appointment_webhook",
+    {
+      title: "Webhook de Criação de Agendamento",
+      description: `Recebe webhook externo para criação de consulta odontológica.
+
+Usado para integração com sistemas externos que notificam via webhook.
+type deve ser sempre "APPOINTMENT_CREATED".
+data.ecuro_clinic_id, data.start_time, data.customer.name e data.customer.phone são obrigatórios.
+
+Mapeamento automático para formato interno do Ecuro.`,
+      inputSchema: CreateAppointmentWebhookSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.post("/create-appointment-webhook", params as unknown as Record<string, unknown>);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
