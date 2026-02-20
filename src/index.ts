@@ -1,17 +1,13 @@
 // ============================================================
-// Ecuro Light MCP Server - Main Entry Point
+// Ecuro Light MCP Server v2 - Main Entry Point
 // ============================================================
 //
 // Servidor MCP para integração com a API Ecuro Light
-// Sistema de Agendamento Odontológico
+// Sistema de Agendamento Odontológico - 22 tools
 //
 // Transports suportados:
 //   - stdio  (padrão) → para uso local com Claude Desktop, Cursor, etc.
 //   - http   → para uso remoto via Streamable HTTP
-//
-// Uso:
-//   TRANSPORT=stdio  node dist/index.js   (ou apenas node dist/index.js)
-//   TRANSPORT=http   node dist/index.js
 //
 // ============================================================
 
@@ -24,18 +20,20 @@ import { randomUUID } from "crypto";
 import { registerAppointmentTools } from "./tools/appointments.js";
 import { registerAvailabilityTools } from "./tools/availability.js";
 import { registerPatientTools } from "./tools/patients.js";
-import { registerDentistTools } from "./tools/dentists.js";
+import { registerClinicTools } from "./tools/clinics.js";
+
+import { TOOL_COUNT } from "./constants.js";
 
 // ── Helper: cria e configura um McpServer com todas as tools ──
 function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "ecuro-mcp-server",
-    version: "1.0.0",
+    version: "2.0.0",
   });
-  registerAppointmentTools(server);
-  registerAvailabilityTools(server);
-  registerPatientTools(server);
-  registerDentistTools(server);
+  registerAppointmentTools(server);   // 7 tools
+  registerAvailabilityTools(server);  // 4 tools
+  registerPatientTools(server);       // 6 tools
+  registerClinicTools(server);        // 5 tools
   return server;
 }
 
@@ -44,8 +42,8 @@ async function runStdio(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("✅ Ecuro MCP Server - 9 tools registradas");
-  console.error("🚀 Ecuro MCP Server rodando via stdio");
+  console.error(`✅ Ecuro MCP Server v2 - ${TOOL_COUNT} tools registradas`);
+  console.error("🚀 Rodando via stdio");
 }
 
 // ── Transport: Streamable HTTP (com sessões) ─────────────────
@@ -57,24 +55,28 @@ async function runHTTP(): Promise<void> {
   const sessions = new Map<string, StreamableHTTPServerTransport>();
 
   // Health check — responde em / e /health
-  const healthResponse = { status: "ok", server: "ecuro-mcp-server", version: "1.0.0", tools: 9 };
+  const healthResponse = {
+    status: "ok",
+    server: "ecuro-mcp-server",
+    version: "2.0.0",
+    tools: TOOL_COUNT,
+  };
   app.get("/", (_req: Request, res: Response) => { res.json(healthResponse); });
   app.get("/health", (_req: Request, res: Response) => { res.json(healthResponse); });
 
   // ── POST /mcp — Recebe mensagens JSON-RPC do MCP ───────────
   app.post("/mcp", async (req: Request, res: Response) => {
     try {
-      // Verifica se já existe uma sessão
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
+      // Sessão existente → reutiliza
       if (sessionId && sessions.has(sessionId)) {
-        // Sessão existente — reutiliza o transport
         const transport = sessions.get(sessionId)!;
         await transport.handleRequest(req, res, req.body);
         return;
       }
 
-      // Nova sessão — se veio um sessionId que não existe, rejeita
+      // SessionId inválido → rejeita
       if (sessionId && !sessions.has(sessionId)) {
         res.status(400).json({
           jsonrpc: "2.0",
@@ -84,24 +86,21 @@ async function runHTTP(): Promise<void> {
         return;
       }
 
-      // Cria nova sessão
+      // Nova sessão
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
       });
 
-      // Cria um novo McpServer para esta sessão
       const server = createMcpServer();
       await server.connect(transport);
 
-      // Guarda a sessão
       const newSessionId = transport.sessionId;
       if (newSessionId) {
         sessions.set(newSessionId, transport);
         console.error(`📌 Nova sessão MCP: ${newSessionId}`);
       }
 
-      // Limpa sessão quando o transport fechar
       transport.onclose = () => {
         if (newSessionId) {
           sessions.delete(newSessionId);
@@ -122,7 +121,7 @@ async function runHTTP(): Promise<void> {
     }
   });
 
-  // ── GET /mcp — SSE stream (opcional, para notificações) ────
+  // ── GET /mcp — SSE stream ──────────────────────────────────
   app.get("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (!sessionId || !sessions.has(sessionId)) {
@@ -154,8 +153,8 @@ async function runHTTP(): Promise<void> {
 
   const port = parseInt(process.env.PORT || "3000", 10);
   app.listen(port, "0.0.0.0", () => {
-    console.error("✅ Ecuro MCP Server - 9 tools registradas");
-    console.error(`🚀 Ecuro MCP Server rodando em http://0.0.0.0:${port}/mcp`);
+    console.error(`✅ Ecuro MCP Server v2 - ${TOOL_COUNT} tools registradas`);
+    console.error(`🚀 Rodando em http://0.0.0.0:${port}/mcp`);
   });
 }
 

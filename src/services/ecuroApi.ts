@@ -1,8 +1,8 @@
 // ============================================================
-// Ecuro Light MCP Server - API Client Service
+// Ecuro Light MCP Server v2 - API Client Service
 // ============================================================
 
-import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios";
+import axios, { type AxiosInstance } from "axios";
 import { ECURO_API_BASE_URL, ECURO_ACCESS_TOKEN } from "../constants.js";
 
 class EcuroApiClient {
@@ -20,10 +20,7 @@ class EcuroApiClient {
     });
   }
 
-  async get<T = unknown>(
-    path: string,
-    params?: Record<string, unknown>
-  ): Promise<T> {
+  async get<T = unknown>(path: string, params?: Record<string, unknown>): Promise<T> {
     try {
       const response = await this.client.get<T>(path, { params });
       return response.data;
@@ -32,12 +29,18 @@ class EcuroApiClient {
     }
   }
 
-  async post<T = unknown>(
-    path: string,
-    data?: Record<string, unknown>
-  ): Promise<T> {
+  async post<T = unknown>(path: string, data?: Record<string, unknown>): Promise<T> {
     try {
       const response = await this.client.post<T>(path, data);
+      return response.data;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async put<T = unknown>(path: string, data?: Record<string, unknown>): Promise<T> {
+    try {
+      const response = await this.client.put<T>(path, data);
       return response.data;
     } catch (error) {
       throw this.handleError(error);
@@ -49,13 +52,12 @@ class EcuroApiClient {
       const status = error.response?.status;
       const data = error.response?.data;
       const message =
-        typeof data === "object" && data !== null && "message" in data
-          ? String((data as Record<string, unknown>).message)
-          : error.message;
-
-      return new Error(
-        `Ecuro API Error (${status ?? "unknown"}): ${message}`
-      );
+        typeof data === "object" && data !== null && "error" in data
+          ? String((data as Record<string, unknown>).error)
+          : typeof data === "object" && data !== null && "message" in data
+            ? String((data as Record<string, unknown>).message)
+            : error.message;
+      return new Error(`Ecuro API Error (${status ?? "unknown"}): ${message}`);
     }
     if (error instanceof Error) return error;
     return new Error("Erro desconhecido na chamada à API Ecuro");

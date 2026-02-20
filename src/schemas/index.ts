@@ -1,132 +1,192 @@
 // ============================================================
-// Ecuro Light MCP Server - Zod Schemas
+// Ecuro Light MCP Server v2 - Zod Schemas (22 tools)
 // ============================================================
 
 import { z } from "zod";
 
-// ── Agendamento ──────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────
+const uuid = z.string().uuid();
+const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato: YYYY-MM-DD");
+const timeStr = z.string().regex(/^\d{2}:\d{2}:\d{2}$/, "Formato: HH:MM:SS");
+
+// ══════════════════════════════════════════════════════════════
+// AGENDAMENTO
+// ══════════════════════════════════════════════════════════════
 
 export const CreateAppointmentSchema = z.object({
-  fullName: z
-    .string()
-    .min(2)
-    .describe("Nome completo do paciente"),
-  phoneNumber: z
-    .string()
-    .min(8)
-    .describe("Telefone de contato do paciente (ex: 31999999999)"),
-  clinicId: z
-    .string()
-    .uuid()
-    .describe("ID da clínica (UUID)"),
-  date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato deve ser yyyy-MM-dd")
-    .describe("Data da consulta no formato yyyy-MM-dd"),
-  time: z
-    .string()
-    .regex(/^\d{2}:\d{2}:\d{2}$/, "Formato deve ser HH:MM:SS")
-    .describe("Horário da consulta no formato HH:MM:SS"),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato deve ser yyyy-MM-dd")
-    .describe("Data de nascimento do paciente no formato yyyy-MM-dd"),
-}).strict();
+  fullName: z.string().min(2).describe("Nome completo do paciente"),
+  phoneNumber: z.string().min(8).describe("Telefone (ex: 31999999999)"),
+  clinicId: uuid.describe("ID da clínica (UUID)"),
+  date: dateStr.describe("Data da consulta (YYYY-MM-DD)"),
+  time: timeStr.optional().describe("Horário (HH:MM:SS). Padrão: 19:59:00"),
+  dateOfBirth: dateStr.optional().describe("Data de nascimento (YYYY-MM-DD)"),
+  email: z.string().email().optional().describe("Email do paciente"),
+  doctorId: z.string().optional().describe("ID do dentista (UUID ou '0' para não especificado)"),
+  specialityId: uuid.optional().describe("ID da especialidade (padrão: avaliação)"),
+  socialNumber: z.string().optional().describe("CPF do paciente"),
+  patientId: uuid.optional().describe("ID do paciente existente (pula busca)"),
+  notes: z.string().max(500).optional().describe("Observações sobre a consulta"),
+  durationMinutes: z.number().int().min(5).max(240).optional().describe("Duração em minutos"),
+  campaignToken: z.string().optional().describe("Token de campanha de marketing"),
+  channelName: z.string().optional().describe("Canal de marketing (ex: Radio, Website, Facebook)"),
+  maxConcurrentAppointments: z.number().int().min(1).max(10).optional().describe("Máx consultas simultâneas (só sem dentista real)"),
+});
 
-export const CreateAppointmentWithDoctorSchema = CreateAppointmentSchema.extend({
-  doctorId: z
-    .string()
-    .uuid()
-    .describe("ID do dentista específico (UUID)"),
-}).strict();
+export const UpdateAppointmentSchema = z.object({
+  appointmentId: uuid.describe("ID da consulta a atualizar"),
+  date: dateStr.optional().describe("Nova data (YYYY-MM-DD)"),
+  time: timeStr.optional().describe("Novo horário (HH:MM:SS)"),
+  status: z.union([
+    z.number().int().min(1).max(5),
+    z.enum(["PENDING", "NOT_ANSWERED", "RESCHEDULED", "CONFIRMED", "CANCELED"]),
+  ]).optional().describe("Novo status (1-5 ou nome)"),
+  doctorId: z.string().optional().describe("ID do novo dentista"),
+  doctorName: z.string().optional().describe("Nome do novo dentista"),
+  durationMinutes: z.number().optional().describe("Nova duração em minutos"),
+  notes: z.string().max(500).optional().describe("Observações (salvas como comentário)"),
+  cancellationReason: z.string().max(500).optional().describe("Motivo do cancelamento"),
+  createReturnRecord: z.boolean().optional().describe("Se true + status CANCELED = cria registro de retorno"),
+});
 
-// ── Disponibilidade ──────────────────────────────────────────
+export const ConfirmAppointmentSchema = z.object({
+  appointmentId: uuid.describe("ID da consulta a confirmar"),
+});
 
-export const SearchAvailabilitySchema = z.object({
-  clinicId: z
-    .string()
-    .uuid()
-    .describe("ID da clínica (UUID)"),
-  startDate: z
-    .string()
-    .describe("Data/hora de início da busca no formato ISO 8601 (ex: 2025-06-15T10:00:00)"),
-  endDate: z
-    .string()
-    .describe("Data/hora de fim da busca no formato ISO 8601 (ex: 2025-06-22T18:00:00)"),
-  duration: z
-    .number()
-    .int()
-    .positive()
-    .default(60)
-    .describe("Duração da consulta em minutos (padrão: 60)"),
-}).strict();
+export const ListPatientAppointmentsSchema = z.object({
+  patientId: uuid.describe("ID do paciente"),
+});
+
+export const ListDoctorAppointmentsSchema = z.object({
+  dentistId: z.string().describe("ID do dentista"),
+  startTime: z.string().describe("Data/hora início (ISO 8601, ex: 2025-02-20T00:00:00.000Z)"),
+  endTime: z.string().describe("Data/hora fim (ISO 8601, ex: 2025-02-20T23:59:59.000Z)"),
+});
+
+export const ListAppointmentsSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+  dateRange: z.string().optional().describe("Intervalo: YYYY-MM-DD,YYYY-MM-DD (obrigatório sem appointmentId)"),
+  appointmentId: uuid.optional().describe("ID de consulta específica"),
+  status: z.number().int().min(1).max(5).optional().describe("Filtrar por status (1-5)"),
+  dentistId: z.string().optional().describe("Filtrar por dentista"),
+  all: z.boolean().optional().describe("Incluir consultas de todos os consumers"),
+});
+
+export const ListReturnsSchema = z.object({
+  clinicId: uuid.optional().describe("ID da clínica"),
+  patientId: uuid.optional().describe("ID do paciente"),
+  initialAppointmentId: uuid.optional().describe("ID da consulta original"),
+  specialtyId: uuid.optional().describe("ID da especialidade"),
+  dentistId: uuid.optional().describe("ID do dentista"),
+  startDate: z.string().optional().describe("Data inicial (YYYY-MM-DD)"),
+  endDate: z.string().optional().describe("Data final (YYYY-MM-DD)"),
+  includeRescheduled: z.boolean().optional().describe("Incluir já reagendados (padrão: false)"),
+});
+
+// ══════════════════════════════════════════════════════════════
+// DISPONIBILIDADE
+// ══════════════════════════════════════════════════════════════
 
 export const SpecialtyAvailabilitySchema = z.object({
-  clinicId: z
-    .string()
-    .uuid()
-    .describe("ID da clínica (UUID)"),
-  specialtyId: z
-    .string()
-    .uuid()
-    .describe("ID da especialidade (UUID)"),
-  doctorId: z
-    .string()
-    .uuid()
-    .describe("ID do dentista (UUID)"),
-  durationAware: z
-    .boolean()
-    .default(true)
-    .describe("Se deve considerar a duração do procedimento (padrão: true)"),
-}).strict();
+  clinicId: uuid.describe("ID da clínica"),
+  specialtyId: uuid.optional().describe("ID da especialidade (padrão: avaliação)"),
+  doctorId: z.string().optional().describe("ID do dentista (padrão: '0')"),
+  startDate: z.string().optional().describe("Data início (YYYY-MM-DD ou ISO 8601)"),
+  endDate: z.string().optional().describe("Data fim (YYYY-MM-DD ou ISO 8601)"),
+  duration: z.number().int().min(5).max(240).optional().describe("Duração em minutos"),
+  concurrent: z.number().int().min(1).max(10).optional().describe("Máx consultas simultâneas"),
+  durationAware: z.boolean().optional().describe("Usar duração da especialidade (padrão: true)"),
+});
 
 export const DentistAvailabilitySchema = z.object({
-  dentistId: z
-    .string()
-    .uuid()
-    .describe("ID do dentista (UUID)"),
-  date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato deve ser yyyy-MM-dd")
-    .describe("Data para verificar disponibilidade no formato yyyy-MM-dd"),
-}).strict();
+  dentistId: z.string().describe("ID do dentista"),
+  date: dateStr.describe("Data (YYYY-MM-DD)"),
+});
 
-// ── Pacientes ────────────────────────────────────────────────
+export const ClinicBlockersSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+});
+
+export const FreeDatesSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+  dateMin: dateStr.describe("Data mínima (YYYY-MM-DD)"),
+  dateMax: dateStr.describe("Data máxima (YYYY-MM-DD)"),
+});
+
+// ══════════════════════════════════════════════════════════════
+// PACIENTES
+// ══════════════════════════════════════════════════════════════
 
 export const GetPatientByPhoneSchema = z.object({
-  phone: z
-    .string()
-    .min(8)
-    .describe("Número de telefone do paciente (ex: 31989354137)"),
-}).strict();
+  phone: z.string().min(8).describe("Telefone do paciente (ex: 31989354137)"),
+});
 
-// ── Dentistas (Supabase) ─────────────────────────────────────
+export const GetPatientByCpfSchema = z.object({
+  cpf: z.string().describe("CPF do paciente (com ou sem formatação)"),
+  clinicId: uuid.optional().describe("ID da clínica (opcional, para busca multi-clínica)"),
+});
 
-export const GetDentistByNameSchema = z.object({
-  firstName: z
-    .string()
-    .min(1)
-    .describe("Primeiro nome do dentista para busca"),
-  clinicId: z
-    .string()
-    .uuid()
-    .describe("ID da clínica (UUID)"),
-}).strict();
+export const PatientDetailsSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+  patientId: uuid.optional().describe("ID do paciente"),
+  cpf: z.string().optional().describe("CPF do paciente (alternativa ao ID)"),
+});
 
-export const GetDentistBySpecialitySchema = z.object({
-  specialityName: z
-    .string()
-    .min(1)
-    .describe("Nome da especialidade (ex: Ortodontia, Implante, Avaliação)"),
-  clinicId: z
-    .string()
-    .uuid()
-    .describe("ID da clínica (UUID)"),
-}).strict();
+export const ListPatientsSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+  all: z.boolean().optional().describe("Listar todos os pacientes"),
+  lastAppointment: dateStr.optional().describe("Filtrar por última consulta"),
+  dateOfBirth: dateStr.optional().describe("Filtrar por data de nascimento"),
+});
 
-export const GetDentistByAssessmentSchema = z.object({
-  clinicId: z
-    .string()
-    .uuid()
-    .describe("ID da clínica (UUID)"),
-}).strict();
+export const PatientTreatmentsSchema = z.object({
+  patientId: uuid.describe("ID do paciente"),
+});
+
+export const OrtoPatientsSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+  category: z.enum([
+    "nao-remarcados", "active", "inactive", "atrazados",
+    "fantasma", "indicacao", "cancelled", "finalized",
+  ]).optional().describe("Categoria (padrão: nao-remarcados)"),
+  page: z.number().int().min(1).optional().describe("Página (padrão: 1)"),
+  pageSize: z.number().int().min(1).max(100).optional().describe("Itens por página (padrão: 20)"),
+  patientName: z.string().optional().describe("Buscar por nome, CPF ou ID público"),
+});
+
+// ══════════════════════════════════════════════════════════════
+// CLÍNICAS & DENTISTAS
+// ══════════════════════════════════════════════════════════════
+
+export const ListClinicsSchema = z.object({
+  clinicId: uuid.optional().describe("ID de clínica específica (opcional)"),
+});
+
+export const ListSpecialtiesSchema = z.object({});
+
+export const ActiveDentistsSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+});
+
+// ══════════════════════════════════════════════════════════════
+// RELATÓRIOS & FINANCEIRO
+// ══════════════════════════════════════════════════════════════
+
+export const ApiReportSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+  startDate: dateStr.optional().describe("Data início (YYYY-MM-DD). Padrão: 31 dias atrás"),
+  endDate: dateStr.optional().describe("Data fim (YYYY-MM-DD). Padrão: hoje"),
+  appointmentId: uuid.optional().describe("ID de consulta específica"),
+  patientId: uuid.optional().describe("ID de paciente específico"),
+  nonApiExclusive: z.boolean().optional().describe("Incluir todas as consultas, não só API"),
+});
+
+export const ListBoletosSchema = z.object({
+  clinicId: uuid.describe("ID da clínica"),
+  patientId: uuid.optional().describe("ID do paciente"),
+  dentistId: uuid.optional().describe("ID do dentista"),
+  status: z.array(z.string()).optional().describe("Status: CREATED, REGISTERED, SETTLEMENT, CANCELLED, etc"),
+  dueSoon: z.enum(["today", "week", "month"]).optional().describe("Vencendo em breve"),
+  overdue: z.boolean().optional().describe("Boletos vencidos"),
+  page: z.number().int().min(1).optional().describe("Página"),
+  pageSize: z.number().int().min(1).max(100).optional().describe("Itens por página"),
+});

@@ -1,106 +1,154 @@
 // ============================================================
-// Ecuro Light MCP Server - Appointment Tools
+// Ecuro Light MCP Server v2 - Appointment Tools (7 tools)
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ecuroApi } from "../services/ecuroApi.js";
 import {
   CreateAppointmentSchema,
-  CreateAppointmentWithDoctorSchema,
+  UpdateAppointmentSchema,
+  ConfirmAppointmentSchema,
+  ListPatientAppointmentsSchema,
+  ListDoctorAppointmentsSchema,
+  ListAppointmentsSchema,
+  ListReturnsSchema,
 } from "../schemas/index.js";
-import type { AppointmentPayload } from "../types.js";
 
 export function registerAppointmentTools(server: McpServer): void {
-  // ── Criar agendamento (avaliação genérica) ─────────────────
+  // ── 1. Criar agendamento ────────────────────────────────────
   server.registerTool(
     "ecuro_create_appointment",
     {
       title: "Criar Agendamento",
-      description: `Cria um agendamento de consulta de avaliação na clínica.
+      description: `Cria uma consulta odontológica. Suporta pacientes novos e existentes.
 
-Envia os dados do paciente para criar uma consulta de avaliação.
-O sistema atribui automaticamente um dentista disponível.
+Campos obrigatórios: fullName, phoneNumber, clinicId, date.
+Campos opcionais: time, dateOfBirth, email, doctorId, specialityId, socialNumber, patientId, notes, durationMinutes, campaignToken, channelName.
 
-Args:
-  - fullName (string): Nome completo do paciente
-  - phoneNumber (string): Telefone de contato
-  - clinicId (string): UUID da clínica
-  - date (string): Data da consulta (yyyy-MM-dd)
-  - time (string): Horário da consulta (HH:MM:SS)
-  - dateOfBirth (string): Data de nascimento (yyyy-MM-dd)
+Lógica de paciente: se patientId → usa direto. Se socialNumber → busca por CPF. Se phoneNumber → busca por tel. Se não encontrado → cria novo.
 
-Returns:
-  Dados da consulta criada com ID, status e detalhes.`,
+Retorna dados da consulta criada com ID, status, paciente e detalhes.`,
       inputSchema: CreateAppointmentSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
     },
     async (params) => {
-      const payload: AppointmentPayload = {
+      const payload: Record<string, unknown> = {
         method: "create_appointment",
-        fullName: params.fullName,
-        phoneNumber: params.phoneNumber,
-        clinicId: params.clinicId,
-        date: params.date,
-        time: params.time,
-        dateOfBirth: params.dateOfBirth,
+        ...params,
       };
-
-      const result = await ecuroApi.post("/", payload as unknown as Record<string, unknown>);
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
+      const result = await ecuroApi.post("/", payload);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  // ── Criar agendamento para profissional específico ─────────
+  // ── 2. Atualizar agendamento ────────────────────────────────
   server.registerTool(
-    "ecuro_create_appointment_for_doctor",
+    "ecuro_update_appointment",
     {
-      title: "Criar Agendamento para Profissional Específico",
-      description: `Cria um agendamento de consulta com um dentista específico.
+      title: "Atualizar Agendamento",
+      description: `Atualiza uma consulta existente. Permite alterar data, horário, status, dentista, notas e cancelar com retorno.
 
-Igual ao agendamento padrão, mas permite especificar o dentista desejado.
+Status: 1=PENDING, 2=NOT_ANSWERED, 3=RESCHEDULED, 4=CONFIRMED, 5=CANCELED.
 
-Args:
-  - fullName (string): Nome completo do paciente
-  - phoneNumber (string): Telefone de contato
-  - clinicId (string): UUID da clínica
-  - date (string): Data da consulta (yyyy-MM-dd)
-  - time (string): Horário da consulta (HH:MM:SS)
-  - dateOfBirth (string): Data de nascimento (yyyy-MM-dd)
-  - doctorId (string): UUID do dentista desejado
+Especial: createReturnRecord=true + status=CANCELED → cria registro de retorno em vez de cancelar definitivamente.
 
-Returns:
-  Dados da consulta criada com ID, status e detalhes.`,
-      inputSchema: CreateAppointmentWithDoctorSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
+Para alterar dentista: envie doctorId (nome buscado automaticamente).
+Para adicionar observações: envie notes (salvo como comentário com atribuição).`,
+      inputSchema: UpdateAppointmentSchema,
     },
     async (params) => {
-      const payload: AppointmentPayload = {
-        method: "create_appointment",
-        fullName: params.fullName,
-        phoneNumber: params.phoneNumber,
-        clinicId: params.clinicId,
-        date: params.date,
-        time: params.time,
-        dateOfBirth: params.dateOfBirth,
-        doctorId: params.doctorId,
-      };
+      const result = await ecuroApi.put("/update-appointment", params as unknown as Record<string, unknown>);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
 
-      const result = await ecuroApi.post("/", payload as unknown as Record<string, unknown>);
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
+  // ── 3. Confirmar agendamento ────────────────────────────────
+  server.registerTool(
+    "ecuro_confirm_appointment",
+    {
+      title: "Confirmar Agendamento",
+      description: `Confirma uma consulta pendente. Altera status para CONFIRMED.
+
+Funciona em consultas com status: PENDING, NOT_ANSWERED ou RESCHEDULED.`,
+      inputSchema: ConfirmAppointmentSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.put("/", { appointmentId: params.appointmentId });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── 4. Listar consultas do paciente ─────────────────────────
+  server.registerTool(
+    "ecuro_list_patient_appointments",
+    {
+      title: "Listar Consultas do Paciente",
+      description: `Retorna histórico completo de consultas de um paciente específico.`,
+      inputSchema: ListPatientAppointmentsSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.post("/list-appointments-of-patient", {
+        patientId: params.patientId,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── 5. Listar consultas do dentista ─────────────────────────
+  server.registerTool(
+    "ecuro_list_doctor_appointments",
+    {
+      title: "Listar Consultas do Dentista",
+      description: `Retorna agenda de um dentista dentro de um período.
+
+Ideal para: agenda diária, análise de carga, detecção de conflitos.
+Otimizado para até 30 dias. Datas em formato ISO 8601.`,
+      inputSchema: ListDoctorAppointmentsSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.post("/list-appointments-of-doctor", {
+        dentistId: params.dentistId,
+        startTime: params.startTime,
+        endTime: params.endTime,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── 6. Listar consultas por clínica/app ─────────────────────
+  server.registerTool(
+    "ecuro_list_appointments",
+    {
+      title: "Listar Consultas da Clínica",
+      description: `Lista consultas por clínica com filtros avançados.
+
+Modo 1 (consulta única): clinicId + appointmentId
+Modo 2 (lista filtrada): clinicId + dateRange (YYYY-MM-DD,YYYY-MM-DD)
+
+Filtros: status (1-5), dentistId, all (todos os consumers). Máx 3 meses.`,
+      inputSchema: ListAppointmentsSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.get("/appointments/appid", params as unknown as Record<string, unknown>);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── 7. Listar registros de retorno ──────────────────────────
+  server.registerTool(
+    "ecuro_list_returns",
+    {
+      title: "Listar Registros de Retorno",
+      description: `Lista pacientes que precisam reagendar (registros de retorno).
+
+Obrigatório: pelo menos um de clinicId, patientId ou initialAppointmentId.
+Filtros: specialtyId, dentistId, startDate, endDate, includeRescheduled.
+
+Inclui dados do paciente, consulta original e informações de reagendamento.`,
+      inputSchema: ListReturnsSchema,
+    },
+    async (params) => {
+      const result = await ecuroApi.post("/list-returns", params as unknown as Record<string, unknown>);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 }

@@ -146,9 +146,99 @@ ecuro-mcp-server/
 
 ---
 
+## 🌐 Deploy em VPS (24/7)
+
+### Opção A: Deploy Automático (recomendado)
+
+```bash
+# 1. Envie o projeto para a VPS
+scp -r ecuro-mcp-server/ root@SEU_IP:/root/
+
+# 2. Na VPS, rode o script
+ssh root@SEU_IP
+cd /root/ecuro-mcp-server
+chmod +x deploy.sh
+
+# Com Docker (recomendado):
+sudo ./deploy.sh docker
+
+# Ou com PM2 (sem Docker):
+sudo ./deploy.sh pm2
+```
+
+O script configura tudo automaticamente: Node/Docker, Nginx, SSL, firewall e auto-restart.
+
+### Opção B: Deploy Manual com Docker
+
+```bash
+# Na VPS
+cp .env.example .env
+nano .env  # preencha os tokens
+
+docker compose up -d --build
+
+# Verificar
+docker compose ps
+curl http://localhost:3000/health
+```
+
+### Opção C: Deploy Manual com PM2
+
+```bash
+npm ci && npm run build
+npm install -g pm2
+
+export TRANSPORT=http
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup
+```
+
+### Configurar Nginx + SSL
+
+```bash
+# Copie o template
+sudo cp nginx/ecuro-mcp.conf /etc/nginx/sites-available/ecuro-mcp
+
+# Edite o domínio
+sudo sed -i 's/mcp.seudominio.com.br/SEU_DOMINIO/g' /etc/nginx/sites-available/ecuro-mcp
+
+# Ative
+sudo ln -sf /etc/nginx/sites-available/ecuro-mcp /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# SSL grátis
+sudo certbot --nginx -d SEU_DOMINIO
+```
+
+### Conectar ao Claude Desktop (remoto)
+
+Após o deploy, configure no `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ecuro": {
+      "type": "url",
+      "url": "https://mcp.seudominio.com.br/mcp"
+    }
+  }
+}
+```
+
+---
+
 ## 🧪 Testando
 
 ```bash
 # Testar com MCP Inspector
 npx @modelcontextprotocol/inspector node dist/index.js
+
+# Testar health (após deploy HTTP)
+curl http://localhost:3000/health
+
+# Testar endpoint MCP manualmente
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
