@@ -1,5 +1,5 @@
 // ============================================================
-// Ecuro Light MCP Server v2 - CORS FIXED
+// Ecuro Light MCP Server v2 - CORS FORCED AFTER TRANSPORT
 // ============================================================
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -37,20 +37,23 @@ async function runStdio(): Promise<void> {
   console.error("🚀 Rodando via stdio");
 }
 
+// Helper para forçar headers CORS
+function forceCorsHeaders(res: Response): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, mcp-session-id');
+  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
+}
+
 async function runHTTP(): Promise<void> {
   const app = express();
 
-  // ── CORS MIDDLEWARE (FORÇA ENVIO DOS HEADERS) ─────────────
+  // ── CORS MIDDLEWARE ────────────────────────────────────────
   app.use((req: Request, res: Response, next: NextFunction) => {
-    // Seta headers usando set() ao invés de header()
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type, Accept, mcp-session-id');
-    res.set('Access-Control-Expose-Headers', 'mcp-session-id');
+    forceCorsHeaders(res);
     
-    // Handle preflight - USA .end() ao invés de .sendStatus()
     if (req.method === 'OPTIONS') {
-      console.error(`✅ OPTIONS ${req.path} - CORS headers enviados`);
+      console.error(`✅ OPTIONS ${req.path}`);
       return res.status(200).end();
     }
     
@@ -79,6 +82,30 @@ async function runHTTP(): Promise<void> {
   app.post("/mcp", async (req: Request, res: Response) => {
     console.error(`📥 POST /mcp - Origin: ${req.headers.origin || 'none'}`);
     
+    // Intercepta res.writeHead para forçar CORS
+    const originalWriteHead = res.writeHead.bind(res);
+    res.writeHead = function(statusCode: number, statusMessage?: any, headers?: any): Response {
+      // Normaliza argumentos
+      let finalHeaders = headers || {};
+      if (typeof statusMessage === 'object') {
+        finalHeaders = statusMessage;
+      }
+      
+      // Força CORS headers
+      finalHeaders['Access-Control-Allow-Origin'] = '*';
+      finalHeaders['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+      finalHeaders['Access-Control-Allow-Headers'] = 'Content-Type, Accept, mcp-session-id';
+      finalHeaders['Access-Control-Expose-Headers'] = 'mcp-session-id';
+      
+      console.error(`✅ Forçando CORS no writeHead (status: ${statusCode})`);
+      
+      if (typeof statusMessage === 'string') {
+        return originalWriteHead(statusCode, statusMessage, finalHeaders);
+      } else {
+        return originalWriteHead(statusCode, finalHeaders);
+      }
+    };
+    
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
@@ -89,6 +116,7 @@ async function runHTTP(): Promise<void> {
       }
 
       if (sessionId && !sessions.has(sessionId)) {
+        forceCorsHeaders(res);
         res.status(400).json({
           jsonrpc: "2.0",
           error: { code: -32000, message: "Session not found. Send initialize first." },
@@ -119,9 +147,14 @@ async function runHTTP(): Promise<void> {
       };
 
       await transport.handleRequest(req, res, req.body);
+      
+      // Força CORS após transport processar
+      forceCorsHeaders(res);
+      
     } catch (error) {
       console.error("❌ Erro no POST /mcp:", error);
       if (!res.headersSent) {
+        forceCorsHeaders(res);
         res.status(500).json({
           jsonrpc: "2.0",
           error: { code: -32603, message: "Internal server error" },
@@ -134,6 +167,7 @@ async function runHTTP(): Promise<void> {
   app.get("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (!sessionId || !sessions.has(sessionId)) {
+      forceCorsHeaders(res);
       res.status(400).json({
         jsonrpc: "2.0",
         error: { code: -32000, message: "Invalid or missing session ID" },
@@ -141,6 +175,27 @@ async function runHTTP(): Promise<void> {
       });
       return;
     }
+    
+    // Intercepta writeHead para SSE
+    const originalWriteHead = res.writeHead.bind(res);
+    res.writeHead = function(statusCode: number, statusMessage?: any, headers?: any): Response {
+      let finalHeaders = headers || {};
+      if (typeof statusMessage === 'object') {
+        finalHeaders = statusMessage;
+      }
+      
+      finalHeaders['Access-Control-Allow-Origin'] = '*';
+      finalHeaders['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+      finalHeaders['Access-Control-Allow-Headers'] = 'Content-Type, Accept, mcp-session-id';
+      finalHeaders['Access-Control-Expose-Headers'] = 'mcp-session-id';
+      
+      if (typeof statusMessage === 'string') {
+        return originalWriteHead(statusCode, statusMessage, finalHeaders);
+      } else {
+        return originalWriteHead(statusCode, finalHeaders);
+      }
+    };
+    
     const transport = sessions.get(sessionId)!;
     await transport.handleRequest(req, res);
   });
@@ -148,6 +203,7 @@ async function runHTTP(): Promise<void> {
   app.delete("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (!sessionId || !sessions.has(sessionId)) {
+      forceCorsHeaders(res);
       res.status(400).json({
         jsonrpc: "2.0",
         error: { code: -32000, message: "Invalid or missing session ID" },
@@ -163,7 +219,7 @@ async function runHTTP(): Promise<void> {
   app.listen(port, "0.0.0.0", () => {
     console.error(`✅ Ecuro MCP Server v2 - ${TOOL_COUNT} tools registradas`);
     console.error(`🚀 Rodando em http://0.0.0.0:${port}/mcp`);
-    console.error(`🌐 CORS: ALL ORIGINS (*)`);
+    console.error(`🌐 CORS: ALL ORIGINS (interceptado)`);
   });
 }
 
