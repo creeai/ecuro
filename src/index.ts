@@ -1,11 +1,11 @@
 // ============================================================
-// Ecuro Light MCP Server v2 - Main Entry Point (DEBUG CORS)
+// Ecuro Light MCP Server v2 - CORS FIXED
 // ============================================================
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { randomUUID } from "crypto";
 
 import { registerAppointmentTools } from "./tools/appointments.js";
@@ -40,22 +40,20 @@ async function runStdio(): Promise<void> {
 async function runHTTP(): Promise<void> {
   const app = express();
 
-  // ── CORS MIDDLEWARE (PRIMEIRA COISA!) ─────────────────────
-  app.use((req: Request, res: Response, next) => {
-    console.error(`🔍 CORS Middleware: ${req.method} ${req.path}`);
-    console.error(`🔍 Origin: ${req.headers.origin || 'none'}`);
+  // ── CORS MIDDLEWARE (FORÇA ENVIO DOS HEADERS) ─────────────
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // Seta headers usando set() ao invés de header()
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Accept, mcp-session-id');
+    res.set('Access-Control-Expose-Headers', 'mcp-session-id');
     
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Accept, mcp-session-id');
-    res.header('Access-Control-Expose-Headers', 'mcp-session-id');
-    
-    console.error(`✅ CORS Headers adicionados!`);
-    
+    // Handle preflight - USA .end() ao invés de .sendStatus()
     if (req.method === 'OPTIONS') {
-      console.error(`✅ Respondendo OPTIONS com 200`);
-      return res.sendStatus(200);
+      console.error(`✅ OPTIONS ${req.path} - CORS headers enviados`);
+      return res.status(200).end();
     }
+    
     next();
   });
 
@@ -71,32 +69,26 @@ async function runHTTP(): Promise<void> {
   };
   
   app.get("/", (_req: Request, res: Response) => { 
-    console.error("✅ GET / - Health check");
     res.json(healthResponse); 
   });
   
   app.get("/health", (_req: Request, res: Response) => { 
-    console.error("✅ GET /health");
     res.json(healthResponse); 
   });
 
   app.post("/mcp", async (req: Request, res: Response) => {
-    console.error(`📥 POST /mcp recebido`);
-    console.error(`📥 Headers: ${JSON.stringify(req.headers)}`);
-    console.error(`📥 Body: ${JSON.stringify(req.body)}`);
+    console.error(`📥 POST /mcp - Origin: ${req.headers.origin || 'none'}`);
     
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
       if (sessionId && sessions.has(sessionId)) {
-        console.error(`♻️  Reutilizando sessão: ${sessionId}`);
         const transport = sessions.get(sessionId)!;
         await transport.handleRequest(req, res, req.body);
         return;
       }
 
       if (sessionId && !sessions.has(sessionId)) {
-        console.error(`❌ Sessão inválida: ${sessionId}`);
         res.status(400).json({
           jsonrpc: "2.0",
           error: { code: -32000, message: "Session not found. Send initialize first." },
@@ -105,7 +97,6 @@ async function runHTTP(): Promise<void> {
         return;
       }
 
-      console.error(`🆕 Criando nova sessão...`);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
@@ -117,7 +108,7 @@ async function runHTTP(): Promise<void> {
       const newSessionId = transport.sessionId;
       if (newSessionId) {
         sessions.set(newSessionId, transport);
-        console.error(`📌 Nova sessão criada: ${newSessionId}`);
+        console.error(`📌 Nova sessão: ${newSessionId}`);
       }
 
       transport.onclose = () => {
@@ -127,7 +118,6 @@ async function runHTTP(): Promise<void> {
         }
       };
 
-      console.error(`📤 Enviando resposta...`);
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
       console.error("❌ Erro no POST /mcp:", error);
@@ -173,7 +163,7 @@ async function runHTTP(): Promise<void> {
   app.listen(port, "0.0.0.0", () => {
     console.error(`✅ Ecuro MCP Server v2 - ${TOOL_COUNT} tools registradas`);
     console.error(`🚀 Rodando em http://0.0.0.0:${port}/mcp`);
-    console.error(`🔍 CORS habilitado para todos os origins`);
+    console.error(`🌐 CORS: ALL ORIGINS (*)`);
   });
 }
 
