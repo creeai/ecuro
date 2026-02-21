@@ -53,6 +53,21 @@ async function runHTTP(): Promise<void> {
   const app = express();
   app.use(express.json());
 
+  // ── CORS MIDDLEWARE ────────────────────────────────────────
+  app.use((req: Request, res: Response, next) => {
+    // Permitir Claude.ai e outros origins
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Accept, mcp-session-id');
+    res.header('Access-Control-Expose-Headers', 'mcp-session-id');
+    
+    // Handle preflight
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   // Armazena sessões ativas: sessionId → transport
   const sessions = new Map<string, StreamableHTTPServerTransport>();
 
