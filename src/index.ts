@@ -1,14 +1,5 @@
 // ============================================================
-// Ecuro Light MCP Server v2 - Main Entry Point
-// ============================================================
-//
-// Servidor MCP para integração com a API Ecuro Light
-// Sistema de Agendamento Odontológico - 27 tools
-//
-// Transports suportados:
-//   - stdio  (padrão) → para uso local com Claude Desktop, Cursor, etc.
-//   - http   → para uso remoto via Streamable HTTP
-//
+// Ecuro Light MCP Server v2 - Main Entry Point (DEBUG CORS)
 // ============================================================
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -25,21 +16,19 @@ import { registerCommunicationTools } from "./tools/communications.js";
 
 import { TOOL_COUNT } from "./constants.js";
 
-// ── Helper: cria e configura um McpServer com todas as tools ──
 function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "ecuro-mcp-server",
     version: "2.0.0",
   });
-  registerAppointmentTools(server);    // 8 tools
-  registerAvailabilityTools(server);   // 4 tools
-  registerPatientTools(server);        // 7 tools
-  registerClinicTools(server);         // 7 tools
-  registerCommunicationTools(server);  // 1 tool
+  registerAppointmentTools(server);
+  registerAvailabilityTools(server);
+  registerPatientTools(server);
+  registerClinicTools(server);
+  registerCommunicationTools(server);
   return server;
 }
 
-// ── Transport: stdio ─────────────────────────────────────────
 async function runStdio(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
@@ -48,53 +37,66 @@ async function runStdio(): Promise<void> {
   console.error("🚀 Rodando via stdio");
 }
 
-// ── Transport: Streamable HTTP (com sessões) ─────────────────
 async function runHTTP(): Promise<void> {
   const app = express();
-  app.use(express.json());
 
-  // ── CORS MIDDLEWARE ────────────────────────────────────────
+  // ── CORS MIDDLEWARE (PRIMEIRA COISA!) ─────────────────────
   app.use((req: Request, res: Response, next) => {
-    // Permitir Claude.ai e outros origins
+    console.error(`🔍 CORS Middleware: ${req.method} ${req.path}`);
+    console.error(`🔍 Origin: ${req.headers.origin || 'none'}`);
+    
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Accept, mcp-session-id');
     res.header('Access-Control-Expose-Headers', 'mcp-session-id');
     
-    // Handle preflight
+    console.error(`✅ CORS Headers adicionados!`);
+    
     if (req.method === 'OPTIONS') {
+      console.error(`✅ Respondendo OPTIONS com 200`);
       return res.sendStatus(200);
     }
     next();
   });
 
-  // Armazena sessões ativas: sessionId → transport
+  app.use(express.json());
+
   const sessions = new Map<string, StreamableHTTPServerTransport>();
 
-  // Health check — responde em / e /health
   const healthResponse = {
     status: "ok",
     server: "ecuro-mcp-server",
     version: "2.0.0",
     tools: TOOL_COUNT,
   };
-  app.get("/", (_req: Request, res: Response) => { res.json(healthResponse); });
-  app.get("/health", (_req: Request, res: Response) => { res.json(healthResponse); });
+  
+  app.get("/", (_req: Request, res: Response) => { 
+    console.error("✅ GET / - Health check");
+    res.json(healthResponse); 
+  });
+  
+  app.get("/health", (_req: Request, res: Response) => { 
+    console.error("✅ GET /health");
+    res.json(healthResponse); 
+  });
 
-  // ── POST /mcp — Recebe mensagens JSON-RPC do MCP ───────────
   app.post("/mcp", async (req: Request, res: Response) => {
+    console.error(`📥 POST /mcp recebido`);
+    console.error(`📥 Headers: ${JSON.stringify(req.headers)}`);
+    console.error(`📥 Body: ${JSON.stringify(req.body)}`);
+    
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
-      // Sessão existente → reutiliza
       if (sessionId && sessions.has(sessionId)) {
+        console.error(`♻️  Reutilizando sessão: ${sessionId}`);
         const transport = sessions.get(sessionId)!;
         await transport.handleRequest(req, res, req.body);
         return;
       }
 
-      // SessionId inválido → rejeita
       if (sessionId && !sessions.has(sessionId)) {
+        console.error(`❌ Sessão inválida: ${sessionId}`);
         res.status(400).json({
           jsonrpc: "2.0",
           error: { code: -32000, message: "Session not found. Send initialize first." },
@@ -103,7 +105,7 @@ async function runHTTP(): Promise<void> {
         return;
       }
 
-      // Nova sessão
+      console.error(`🆕 Criando nova sessão...`);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
@@ -115,7 +117,7 @@ async function runHTTP(): Promise<void> {
       const newSessionId = transport.sessionId;
       if (newSessionId) {
         sessions.set(newSessionId, transport);
-        console.error(`📌 Nova sessão MCP: ${newSessionId}`);
+        console.error(`📌 Nova sessão criada: ${newSessionId}`);
       }
 
       transport.onclose = () => {
@@ -125,6 +127,7 @@ async function runHTTP(): Promise<void> {
         }
       };
 
+      console.error(`📤 Enviando resposta...`);
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
       console.error("❌ Erro no POST /mcp:", error);
@@ -138,7 +141,6 @@ async function runHTTP(): Promise<void> {
     }
   });
 
-  // ── GET /mcp — SSE stream ──────────────────────────────────
   app.get("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (!sessionId || !sessions.has(sessionId)) {
@@ -153,7 +155,6 @@ async function runHTTP(): Promise<void> {
     await transport.handleRequest(req, res);
   });
 
-  // ── DELETE /mcp — Encerra sessão ───────────────────────────
   app.delete("/mcp", async (req: Request, res: Response) => {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     if (!sessionId || !sessions.has(sessionId)) {
@@ -172,10 +173,10 @@ async function runHTTP(): Promise<void> {
   app.listen(port, "0.0.0.0", () => {
     console.error(`✅ Ecuro MCP Server v2 - ${TOOL_COUNT} tools registradas`);
     console.error(`🚀 Rodando em http://0.0.0.0:${port}/mcp`);
+    console.error(`🔍 CORS habilitado para todos os origins`);
   });
 }
 
-// ── Selecionar transport e iniciar ───────────────────────────
 const transportMode = process.env.TRANSPORT || "stdio";
 
 if (transportMode === "http") {
